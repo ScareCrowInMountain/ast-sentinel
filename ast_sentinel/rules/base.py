@@ -8,6 +8,7 @@ import ast
 from abc import ABC
 from typing import List, Optional, Type
 
+from ast_sentinel.context import AnalysisContext
 from ast_sentinel.models import Finding, RuleMetadata, Severity
 
 
@@ -19,26 +20,48 @@ class BaseRule(ABC):
     def check_call(
         self,
         node: ast.Call,
-        file_path: str,
-        source_lines: List[str],
+        context: AnalysisContext,
     ) -> List[Finding]:
-        """Inspects ast.Call nodes. Override in subclass to implement checks."""
+        """Inspects ast.Call nodes."""
+        return []
+
+    def check_assign(
+        self,
+        node: ast.Assign,
+        context: AnalysisContext,
+    ) -> List[Finding]:
+        """Inspects ast.Assign nodes (e.g., hardcoded secrets, debug flags)."""
+        return []
+
+    def check_assert(
+        self,
+        node: ast.Assert,
+        context: AnalysisContext,
+    ) -> List[Finding]:
+        """Inspects ast.Assert nodes."""
         return []
 
     def create_finding(
         self,
         node: ast.AST,
-        file_path: str,
-        source_lines: List[str],
+        context: AnalysisContext,
         message: str,
         severity: Optional[Severity] = None,
-    ) -> Finding:
-        """Helper to create a structured Finding object from an AST node."""
+    ) -> Optional[Finding]:
+        """
+        Creates a structured Finding object from an AST node.
+        Returns None if the finding is suppressed via inline comments (# nosec).
+        """
         lineno = getattr(node, "lineno", 0)
         col_offset = getattr(node, "col_offset", 0)
+
+        # Check for inline suppression directives (# nosec)
+        if context.is_suppressed(self.metadata.rule_id, lineno):
+            return None
+
         snippet = None
-        if 1 <= lineno <= len(source_lines):
-            snippet = source_lines[lineno - 1].strip()
+        if 1 <= lineno <= len(context.source_lines):
+            snippet = context.source_lines[lineno - 1].strip()
 
         return Finding(
             rule_id=self.metadata.rule_id,
@@ -46,7 +69,7 @@ class BaseRule(ABC):
             cwe_id=self.metadata.cwe_id,
             severity=severity or self.metadata.default_severity,
             message=message,
-            file_path=file_path,
+            file_path=context.file_path,
             line_number=lineno,
             col_offset=col_offset,
             snippet=snippet,
@@ -58,5 +81,6 @@ RULE_REGISTRY: List[Type[BaseRule]] = []
 
 def register_rule(cls: Type[BaseRule]) -> Type[BaseRule]:
     """Decorator to register a rule into the active rule catalog."""
-    RULE_REGISTRY.append(cls)
+    if cls not in RULE_REGISTRY:
+        RULE_REGISTRY.append(cls)
     return cls

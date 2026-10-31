@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ "main" ]
 
+permissions:
+  contents: read
+  security-events: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -35,10 +39,22 @@ jobs:
         run: |
           mypy ast_sentinel --ignore-missing-imports
 
-      - name: Run pytest test suite
+      - name: Run unit test suite
         run: |
           pytest -v --tb=short
 
       - name: Dogfooding (Self-scan AST-Sentinel)
         run: |
           python3 -m ast_sentinel.cli ast_sentinel --severity HIGH
+
+      - name: Generate OASIS SARIF Report
+        if: matrix.python-version == '3.12'
+        run: |
+          python3 -m ast_sentinel.cli ast_sentinel --format sarif --output results.sarif
+
+      - name: Upload SARIF report to GitHub Code Scanning
+        if: matrix.python-version == '3.12' && github.event_name == 'push'
+        uses: github/codeql-action/upload-sarif@v3
+        continue-on-error: true
+        with:
+          sarif_file: results.sarif

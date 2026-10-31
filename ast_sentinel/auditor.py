@@ -1,5 +1,5 @@
 """
-Auditor core: AST traversal and rule execution engine.
+Auditor core: AST traversal and rule execution engine with context tracking.
 """
 
 from __future__ import annotations
@@ -9,22 +9,45 @@ import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set
 
+from ast_sentinel.config import SentinelConfig
+from ast_sentinel.context import AnalysisContext
 from ast_sentinel.models import Finding, Severity
 from ast_sentinel.rules import RULE_REGISTRY, BaseRule
 
 
 class _ASTVisitor(ast.NodeVisitor):
-    def __init__(self, file_path: str, source_lines: List[str], rules: List[BaseRule]):
-        self.file_path = file_path
-        self.source_lines = source_lines
+    def __init__(self, context: AnalysisContext, rules: List[BaseRule]):
+        self.context = context
         self.rules = rules
         self.findings: List[Finding] = []
 
+    def visit_Import(self, node: ast.Import) -> None:
+        self.context.register_import(node)
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        self.context.register_import_from(node)
+        self.generic_visit(node)
+
     def visit_Call(self, node: ast.Call) -> None:
         for rule in self.rules:
-            detected = rule.check_call(node, self.file_path, self.source_lines)
+            detected = rule.check_call(node, self.context)
+            if detected:
+                self.findings.extend(detected)
+        self.generic_visit(node)
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        for rule in self.rules:
+            detected = rule.check_assign(node, self.context)
+            if detected:
+                self.findings.extend(detected)
+        self.generic_visit(node)
+
+    def visit_Assert(self, node: ast.Assert) -> None:
+        for rule in self.rules:
+            detected = rule.check_assert(node, self.context)
             if detected:
                 self.findings.extend(detected)
         self.generic_visit(node)
@@ -54,7 +77,7 @@ class AuditReport:
 class CodeAuditor:
     """
     Main SAST engine that walks files, parses abstract syntax trees,
-    and runs configured security rules.
+    and runs configured security rules with semantic context.
     """
 
     DEFAULT_IGNORE_DIRS: Set[str] = {
@@ -67,6 +90,7 @@ class CodeAuditor:
         "env",
         ".pytest_cache",
         ".mypy_cache",
+        ".ruff_cache",
         "dist",
         "build",
         "node_modules",
@@ -75,11 +99,24 @@ class CodeAuditor:
     def __init__(
         self,
         min_severity: Severity = Severity.LOW,
-        ignore_dirs: Set[str] | None = None,
+        ignore_dirs: Optional[Set[str]] = None,
+        ignore_rules: Optional[Set[str]] = None,
+        config: Optional[SentinelConfig] = None,
     ):
-        self.min_severity = min_severity
-        self.ignore_dirs = ignore_dirs if ignore_dirs is not None else self.DEFAULT_IGNORE_DIRS
-        self.rules: List[BaseRule] = [rule_cls() for rule_cls in RULE_REGISTRY]
+        if config:
+            self.min_severity = config.min_severity if min_severity == Severity.LOW else min_severity
+            self.ignore_rules = {r.upper() for r in config.ignore_rules}
+            self.ignore_dirs = set(self.DEFAULT_IGNORE_DIRS).union(config.ignore_paths)
+        else:
+            self.min_severity = min_severity
+            self.ignore_rules = {r.upper() for r in (ignore_rules or set())}
+            self.ignore_dirs = ignore_dirs if ignore_dirs is not None else set(self.DEFAULT_IGNORE_DIRS)
+
+        # Initialize active rules, filtering out ignored rules
+        self.rules: List[BaseRule] = [
+            rule_cls() for rule_cls in RULE_REGISTRY
+            if rule_cls.metadata.rule_id.upper() not in self.ignore_rules
+        ]
 
     def audit_file(self, file_path: Path) -> List[Finding]:
         """Audits a single Python file."""
@@ -88,13 +125,18 @@ class CodeAuditor:
                 content = f.read()
             source_lines = content.splitlines()
 
+            context = AnalysisContext(str(file_path), source_lines)
             tree = ast.parse(content, filename=str(file_path))
-            visitor = _ASTVisitor(str(file_path), source_lines, self.rules)
+
+            visitor = _ASTVisitor(context, self.rules)
             visitor.visit(tree)
 
-            # Filter by severity
+            # Filter by severity and ignore rules
             threshold = self.min_severity.level
-            return [f for f in visitor.findings if f.severity.level >= threshold]
+            return [
+                f for f in visitor.findings
+                if f.severity.level >= threshold and f.rule_id.upper() not in self.ignore_rules
+            ]
 
         except SyntaxError as e:
             return [
@@ -140,7 +182,6 @@ class CodeAuditor:
                 findings.extend(self.audit_file(target))
         elif target.is_dir():
             for root, dirs, files in os.walk(target):
-                # Filter out ignored directories in-place
                 dirs[:] = [d for d in dirs if d not in self.ignore_dirs]
                 for file in files:
                     if file.endswith(".py"):

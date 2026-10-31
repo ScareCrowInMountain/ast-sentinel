@@ -1,0 +1,19 @@
+# AST-Sentinel Configuration File (sentinel.toml)
+
+# Minimum severity threshold: LOW, MEDIUM, HIGH, CRITICAL
+min_severity = "LOW"
+
+# Strict mode: fail CI with exit code 1 on ANY finding, including LOW/MEDIUM
+strict = false
+
+# Rules to ignore across the entire codebase
+ignore_rules = [
+    # "SEC012",  # Unsafe Assert Usage
+]
+
+# Custom directories or file paths to ignore
+ignore_paths = [
+    "migrations",
+    "docs",
+    "scripts/fixtures",
+]

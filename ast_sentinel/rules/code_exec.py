@@ -1,6 +1,6 @@
 """
 SEC001: Arbitrary Code Execution Detection.
-Detects dangerous dynamic execution functions (eval, exec, os.system).
+Detects dangerous dynamic execution functions (eval, exec, os.system, os.popen).
 """
 
 from __future__ import annotations
@@ -8,6 +8,7 @@ from __future__ import annotations
 import ast
 from typing import List
 
+from ast_sentinel.context import AnalysisContext
 from ast_sentinel.models import Finding, RuleMetadata, Severity
 from ast_sentinel.rules.base import BaseRule, register_rule
 
@@ -25,38 +26,31 @@ class ArbitraryCodeExecRule(BaseRule):
     def check_call(
         self,
         node: ast.Call,
-        file_path: str,
-        source_lines: List[str],
+        context: AnalysisContext,
     ) -> List[Finding]:
         findings: List[Finding] = []
+        mod, func = context.resolve_call(node.func)
 
-        # Case 1: Built-in eval(...) or exec(...)
-        if isinstance(node.func, ast.Name) and node.func.id in ("eval", "exec"):
-            findings.append(
-                self.create_finding(
-                    node,
-                    file_path,
-                    source_lines,
-                    f"Use of built-in '{node.func.id}()' enables dynamic code evaluation, posing severe code injection risks.",
-                    Severity.CRITICAL,
-                )
+        # Built-in eval / exec
+        if mod is None and func in ("eval", "exec"):
+            finding = self.create_finding(
+                node,
+                context,
+                f"Use of built-in '{func}()' enables dynamic code evaluation, posing severe code injection risks.",
+                Severity.CRITICAL,
             )
+            if finding:
+                findings.append(finding)
 
-        # Case 2: os.system(...) or os.popen(...)
-        elif isinstance(node.func, ast.Attribute):
-            if (
-                isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "os"
-                and node.func.attr in ("system", "popen")
-            ):
-                findings.append(
-                    self.create_finding(
-                        node,
-                        file_path,
-                        source_lines,
-                        f"Direct call to 'os.{node.func.attr}()' executes commands in a system subshell. Prefer subprocess.run with arguments list.",
-                        Severity.HIGH,
-                    )
-                )
+        # os.system / os.popen / posix.system
+        elif mod in ("os", "posix") and func in ("system", "popen"):
+            finding = self.create_finding(
+                node,
+                context,
+                f"Direct call to '{mod}.{func}()' executes commands in a system subshell. Prefer subprocess.run with arguments list.",
+                Severity.HIGH,
+            )
+            if finding:
+                findings.append(finding)
 
         return findings

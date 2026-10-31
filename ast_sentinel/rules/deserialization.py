@@ -8,6 +8,7 @@ from __future__ import annotations
 import ast
 from typing import List
 
+from ast_sentinel.context import AnalysisContext
 from ast_sentinel.models import Finding, RuleMetadata, Severity
 from ast_sentinel.rules.base import BaseRule, register_rule
 
@@ -25,47 +26,36 @@ class InsecureDeserializationRule(BaseRule):
     def check_call(
         self,
         node: ast.Call,
-        file_path: str,
-        source_lines: List[str],
+        context: AnalysisContext,
     ) -> List[Finding]:
         findings: List[Finding] = []
+        mod, func = context.resolve_call(node.func)
 
-        if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
-            mod = node.func.value.id
-            method = node.func.attr
+        # 1. pickle.load / pickle.loads / _pickle.loads / marshal / shelve
+        if mod in ("pickle", "_pickle", "cPickle", "marshal") and func in ("load", "loads"):
+            finding = self.create_finding(
+                node,
+                context,
+                f"Unsafe deserialization with '{mod}.{func}()' can lead to arbitrary code execution if input is untrusted.",
+                Severity.HIGH,
+            )
+            if finding:
+                findings.append(finding)
 
-            # 1. pickle.load / pickle.loads / _pickle.loads
-            if mod in ("pickle", "_pickle", "cPickle") and method in ("load", "loads"):
-                findings.append(
-                    self.create_finding(
-                        node,
-                        file_path,
-                        source_lines,
-                        f"Unsafe deserialization with '{mod}.{method}()' can lead to arbitrary code execution if input is untrusted.",
-                        Severity.HIGH,
-                    )
+        # 2. yaml.load without SafeLoader
+        elif mod == "yaml" and func == "load":
+            has_safe_loader = any(
+                kw.arg == "Loader" and ("SafeLoader" in ast.dump(kw.value) or "CSafeLoader" in ast.dump(kw.value))
+                for kw in node.keywords
+            )
+            if not has_safe_loader:
+                finding = self.create_finding(
+                    node,
+                    context,
+                    "yaml.load() without SafeLoader is vulnerable to arbitrary code execution. Use yaml.safe_load() instead.",
+                    Severity.HIGH,
                 )
-
-            # 2. yaml.load without SafeLoader
-            elif mod == "yaml" and method == "load":
-                has_safe_loader = False
-                for kw in node.keywords:
-                    if kw.arg == "Loader":
-                        # Check Loader=yaml.SafeLoader or Loader=SafeLoader
-                        loader_dump = ast.dump(kw.value)
-                        if "SafeLoader" in loader_dump or "CSafeLoader" in loader_dump:
-                            has_safe_loader = True
-                            break
-
-                if not has_safe_loader:
-                    findings.append(
-                        self.create_finding(
-                            node,
-                            file_path,
-                            source_lines,
-                            "yaml.load() without SafeLoader is vulnerable to arbitrary code execution. Use yaml.safe_load() instead.",
-                            Severity.HIGH,
-                        )
-                    )
+                if finding:
+                    findings.append(finding)
 
         return findings

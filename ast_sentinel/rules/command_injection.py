@@ -8,6 +8,7 @@ from __future__ import annotations
 import ast
 from typing import List
 
+from ast_sentinel.context import AnalysisContext
 from ast_sentinel.models import Finding, RuleMetadata, Severity
 from ast_sentinel.rules.base import BaseRule, register_rule
 
@@ -27,40 +28,21 @@ class SubprocessShellRule(BaseRule):
     def check_call(
         self,
         node: ast.Call,
-        file_path: str,
-        source_lines: List[str],
+        context: AnalysisContext,
     ) -> List[Finding]:
         findings: List[Finding] = []
+        mod, func = context.resolve_call(node.func)
 
-        is_subprocess_call = False
-        func_name = ""
-
-        if isinstance(node.func, ast.Attribute):
-            func_name = node.func.attr
-            if (
-                isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "subprocess"
-                and func_name in self.SUBPROCESS_FUNCS
-            ):
-                is_subprocess_call = True
-        elif isinstance(node.func, ast.Name):
-            func_name = node.func.id
-            if func_name in self.SUBPROCESS_FUNCS:
-                is_subprocess_call = True
-
-        if is_subprocess_call:
+        if mod == "subprocess" and func in self.SUBPROCESS_FUNCS:
             for kw in node.keywords:
-                if kw.arg == "shell":
-                    # shell=True detected
-                    if isinstance(kw.value, ast.Constant) and kw.value.value is True:
-                        findings.append(
-                            self.create_finding(
-                                node,
-                                file_path,
-                                source_lines,
-                                f"subprocess.{func_name}() invoked with shell=True is susceptible to command injection. Pass command arguments as a list.",
-                                Severity.HIGH,
-                            )
-                        )
+                if kw.arg == "shell" and isinstance(kw.value, ast.Constant) and kw.value.value is True:
+                    finding = self.create_finding(
+                        node,
+                        context,
+                        f"subprocess.{func}() invoked with shell=True is susceptible to command injection. Pass command arguments as a list.",
+                        Severity.HIGH,
+                    )
+                    if finding:
+                        findings.append(finding)
 
         return findings

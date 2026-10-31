@@ -8,6 +8,7 @@ from __future__ import annotations
 import ast
 from typing import List
 
+from ast_sentinel.context import AnalysisContext
 from ast_sentinel.models import Finding, RuleMetadata, Severity
 from ast_sentinel.rules.base import BaseRule, register_rule
 
@@ -27,28 +28,25 @@ class InsecureHashRule(BaseRule):
     def check_call(
         self,
         node: ast.Call,
-        file_path: str,
-        source_lines: List[str],
+        context: AnalysisContext,
     ) -> List[Finding]:
         findings: List[Finding] = []
+        mod, func = context.resolve_call(node.func)
 
         algo_name = ""
         is_hashlib_call = False
 
-        if isinstance(node.func, ast.Attribute):
-            if isinstance(node.func.value, ast.Name) and node.func.value.id == "hashlib":
-                if node.func.attr in self.WEAK_HASHES:
-                    algo_name = node.func.attr
+        if mod == "hashlib":
+            if func in self.WEAK_HASHES:
+                algo_name = func
+                is_hashlib_call = True
+            elif func == "new" and node.args and isinstance(node.args[0], ast.Constant):
+                arg_val = str(node.args[0].value).lower()
+                if arg_val in self.WEAK_HASHES:
+                    algo_name = arg_val
                     is_hashlib_call = True
-                elif node.func.attr == "new":
-                    # Check hashlib.new("md5")
-                    if node.args and isinstance(node.args[0], ast.Constant):
-                        if str(node.args[0].value).lower() in self.WEAK_HASHES:
-                            algo_name = str(node.args[0].value).lower()
-                            is_hashlib_call = True
 
         if is_hashlib_call:
-            # Check if usedforsecurity=False is set
             is_defended = any(
                 kw.arg == "usedforsecurity"
                 and isinstance(kw.value, ast.Constant)
@@ -56,14 +54,13 @@ class InsecureHashRule(BaseRule):
                 for kw in node.keywords
             )
             if not is_defended:
-                findings.append(
-                    self.create_finding(
-                        node,
-                        file_path,
-                        source_lines,
-                        f"Insecure hash '{algo_name.upper()}' detected. Use SHA256/SHA512 for security contexts, or set usedforsecurity=False for non-security checksums.",
-                        Severity.MEDIUM,
-                    )
+                finding = self.create_finding(
+                    node,
+                    context,
+                    f"Insecure hash '{algo_name.upper()}' detected. Use SHA256/SHA512 for security contexts, or set usedforsecurity=False for non-security checksums.",
+                    Severity.MEDIUM,
                 )
+                if finding:
+                    findings.append(finding)
 
         return findings
