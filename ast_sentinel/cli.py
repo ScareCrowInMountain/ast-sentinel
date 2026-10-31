@@ -9,11 +9,10 @@ import json
 import sys
 from dataclasses import asdict
 from pathlib import Path
-from typing import List
 
 from ast_sentinel import __version__
-from ast_sentinel.auditor import CodeAuditor, AuditReport
-from ast_sentinel.models import Finding, Severity
+from ast_sentinel.auditor import AuditReport, CodeAuditor
+from ast_sentinel.models import Severity
 from ast_sentinel.rules import RULE_REGISTRY
 
 
@@ -39,9 +38,9 @@ def print_banner() -> None:
     banner = f"""{BOLD}{CYAN}
     ___   _____ ______      _____            __   _            __
    /   | / ___//_  __/     / ___/___  ____  / /_ (_)___  ___  / /
-  / /| | \\__ \\  / / ______ \\__ \\/ _ \\/ __ \\/ __// / __ \\/ _ \\/ / 
- / ___ |___/ / / / /_____/___/ /  __/ / / / /_ / / / / /  __/ /  
-/_/  |_/____/ /_/        /____/\\___/_/ /_/\\__//_/_/ /_/\\___/_/   
+  / /| | \\__ \\  / / ______ \\__ \\/ _ \\/ __ \\/ __// / __ \\/ _ \\/ /
+ / ___ |___/ / / / /_____/___/ /  __/ / / / /_ / / / / /  __/ /
+/_/  |_/____/ /_/        /____/\\___/_/ /_/\\__//_/_/ /_/\\___/_/
                                              v{__version__}{RESET}
     Lightweight AST-Driven Static Security Code Auditor
 """
