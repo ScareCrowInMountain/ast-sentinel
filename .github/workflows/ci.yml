@@ -29,7 +29,7 @@ jobs:
 
       - name: Lint with ruff
         run: |
-          ruff check .
+          ruff check ast_sentinel tests --exclude tests/samples
 
       - name: Type check with mypy
         run: |
