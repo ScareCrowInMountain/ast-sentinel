@@ -9,7 +9,7 @@ from typing import Any, Dict, List
 
 from ast_sentinel import __version__
 from ast_sentinel.auditor import AuditReport
-from ast_sentinel.models import Finding, Severity
+from ast_sentinel.models import Severity
 from ast_sentinel.rules import RULE_REGISTRY
 
 
